@@ -1,6 +1,6 @@
 use slipstream_dns::{
     build_qname, decode_query_with_domains, encode_query, DecodeQueryError, QueryParams, Rcode,
-    CLASS_IN, RR_TXT,
+    CLASS_IN, RR_A,
 };
 
 #[test]
@@ -10,7 +10,7 @@ fn decode_query_with_domains_accepts_any_match() {
     let query = encode_query(&QueryParams {
         id: 42,
         qname: &qname,
-        qtype: RR_TXT,
+        qtype: RR_A,
         qclass: CLASS_IN,
         rd: true,
         cd: false,
@@ -31,7 +31,7 @@ fn decode_query_with_domains_prefers_longest_suffix() {
     let query = encode_query(&QueryParams {
         id: 7,
         qname: &qname,
-        qtype: RR_TXT,
+        qtype: RR_A,
         qclass: CLASS_IN,
         rd: true,
         cd: false,
@@ -52,7 +52,7 @@ fn decode_query_with_domains_rejects_unknown_domain() {
     let query = encode_query(&QueryParams {
         id: 99,
         qname: &qname,
-        qtype: RR_TXT,
+        qtype: RR_A,
         qclass: CLASS_IN,
         rd: true,
         cd: false,
@@ -73,7 +73,7 @@ fn decode_query_with_domains_rejects_empty_subdomain_on_overlap() {
     let query = encode_query(&QueryParams {
         id: 100,
         qname,
-        qtype: RR_TXT,
+        qtype: RR_A,
         qclass: CLASS_IN,
         rd: true,
         cd: false,

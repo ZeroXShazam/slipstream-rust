@@ -1,6 +1,6 @@
 # Protocol
 
-Slipstream encapsulates QUIC packets inside DNS TXT queries and responses. The DNS
+Slipstream encapsulates QUIC packets inside DNS A queries and responses. The DNS
 codec is intentionally minimal and focused on speed and compatibility.
 
 ## Domain suffix
@@ -20,7 +20,7 @@ codec is intentionally minimal and focused on speed and compatibility.
 ## DNS query format (client -> server)
 
 - QNAME: <base32(payload) with inline dots>.<domain>.
-- QTYPE: TXT (RR_TXT)
+- QTYPE: A (RR_A)
 - QCLASS: IN (CLASS_IN)
 - QDCOUNT: 1
 - ARCOUNT: 1 with EDNS0 OPT record:
@@ -45,13 +45,14 @@ codec is intentionally minimal and focused on speed and compatibility.
 
 - If payload length > 0:
   - RCODE = OK
-  - ANCOUNT = 1
-  - Answer is TXT:
-    - name = query QNAME
-    - type = TXT
+  - ANCOUNT = ceil((2 + payload_len) / 4) (multiple A records)
+  - Each answer is A:
+    - name = query QNAME (compression pointer)
+    - type = A
     - class = query class
     - ttl = 60
-    - text = raw payload bytes (no base32)
+    - rdata = 4 bytes (payload chunk)
+  - Payload is prefixed with 2-byte big-endian length; total is padded to multiple of 4.
 - If payload length == 0 and no error:
   - RCODE = NAME_ERROR (NXDOMAIN)
   - ANCOUNT = 0
@@ -60,7 +61,7 @@ codec is intentionally minimal and focused on speed and compatibility.
 
 - If the DNS message is not a query (QR=1): respond with FORMAT_ERROR.
 - If QDCOUNT != 1: respond with FORMAT_ERROR.
-- If QTYPE != TXT: respond with NAME_ERROR (ignore query).
+- If QTYPE != A: respond with NAME_ERROR (ignore query).
 - If the QNAME subdomain is empty: respond with NAME_ERROR.
 - If base32 decode fails: respond with SERVER_FAILURE.
 - If the DNS parser fails (decode error): drop the message (no response).
@@ -71,7 +72,7 @@ codec is intentionally minimal and focused on speed and compatibility.
 
 The client treats the response as data only when:
 
-- QR = 1, RCODE = OK, ANCOUNT = 1, and the answer type is TXT.
+- QR = 1, RCODE = OK, ANCOUNT >= 1, and all answers are type A.
 
 Otherwise, the response is ignored (including NAME_ERROR, which signals no data).
 
@@ -122,6 +123,6 @@ Otherwise, the response is ignored (including NAME_ERROR, which signals no data)
 
 ## References
 
-- DNS codec: crates/slipstream-dns/src/dns.rs
+- DNS codec: crates/slipstream-dns/src/codec.rs
 - Vectors: fixtures/vectors/dns-vectors.json
 - Vector tests: crates/slipstream-dns/tests/vectors.rs

@@ -1,17 +1,10 @@
 # Vector generator
 
-`gen_vectors.c` builds DNS queries and responses using the same SPCDNS + base32 + dotify logic as the C implementation.
-It reads `vectors.txt` and writes JSON to stdout.
+The Rust-based `gen_vectors` binary (in slipstream-dns) builds DNS queries and
+responses using A records. It reads `vectors.txt` and writes JSON to stdout.
 
-## Prereqs
-
-- The slipstream C repo checked out with submodules:
-  https://github.com/EndPositive/slipstream
-- A C compiler (`cc`).
-
-The helper script `scripts/gen_vectors.sh` builds the generator against the C
-repo (default `../slipstream`, override with `SLIPSTREAM_DIR`) and writes
-`fixtures/vectors/dns-vectors.json`.
+The helper script `scripts/gen_vectors.sh` runs the Rust generator and writes
+`fixtures/vectors/dns-vectors.json`. No C repo is required.
 
 Format of `vectors.txt`:
 
@@ -31,7 +24,7 @@ Built-in modes:
 - `normal`
 - `invalid_base32`
 - `suffix_mismatch`
-- `non_txt`
+- `non_a` (TXT query when A is expected -> NAME_ERROR)
 - `empty_subdomain`
 - `qdcount_zero`
 - `not_query`

@@ -185,10 +185,10 @@ fn vectors_match_codec() {
 
 fn query_mode(mode: &str) -> (u16, u16, bool) {
     match mode {
-        "non_txt" => (RR_A, 1, true),
-        "qdcount_zero" => (RR_TXT, 0, true),
-        "not_query" => (RR_TXT, 1, false),
-        _ => (RR_TXT, 1, true),
+        "non_a" => (RR_TXT, 1, true),
+        "qdcount_zero" => (RR_A, 0, true),
+        "not_query" => (RR_A, 1, false),
+        _ => (RR_A, 1, true),
     }
 }
 

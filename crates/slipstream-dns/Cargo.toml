@@ -9,6 +9,8 @@ readme = "../../README.md"
 
 [dependencies]
 slipstream-core = { path = "../slipstream-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

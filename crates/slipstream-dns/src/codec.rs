@@ -4,7 +4,7 @@ use crate::dots;
 use crate::name::{encode_name, extract_subdomain_multi, parse_name};
 use crate::types::{
     DecodeQueryError, DecodedQuery, DnsError, QueryParams, Rcode, ResponseParams, EDNS_UDP_PAYLOAD,
-    RR_OPT, RR_TXT,
+    RR_A, RR_OPT,
 };
 use crate::wire::{
     parse_header, parse_question, parse_question_for_reply, read_u16, read_u32, write_u16,
@@ -54,7 +54,7 @@ pub fn decode_query_with_domains(
         Err(_) => return Err(DecodeQueryError::Drop),
     };
 
-    if question.qtype != RR_TXT {
+    if question.qtype != RR_A {
         return Err(DecodeQueryError::Reply {
             id: header.id,
             rd,
@@ -152,7 +152,12 @@ pub fn encode_response(params: &ResponseParams<'_>) -> Result<Vec<u8>, DnsError>
 
     let mut ancount = 0u16;
     if payload_len > 0 && rcode == Rcode::Ok {
-        ancount = 1;
+        // A records: 4 bytes each. Prepend 2-byte length, pad to multiple of 4.
+        let total = 2 + payload_len;
+        ancount = (total.div_ceil(4)) as u16;
+        if ancount > u16::MAX / 16 {
+            return Err(DnsError::new("payload too long"));
+        }
     } else if params.rcode.is_some() {
         rcode = params.rcode.unwrap_or(Rcode::Ok);
     }
@@ -178,27 +183,23 @@ pub fn encode_response(params: &ResponseParams<'_>) -> Result<Vec<u8>, DnsError>
     write_u16(&mut out, params.question.qtype);
     write_u16(&mut out, params.question.qclass);
 
-    if ancount == 1 {
-        out.extend_from_slice(&[0xC0, 0x0C]);
-        write_u16(&mut out, params.question.qtype);
-        write_u16(&mut out, params.question.qclass);
-        write_u32(&mut out, 60);
-        let chunk_count = payload_len.div_ceil(255);
-        let rdata_len = payload_len + chunk_count;
-        if rdata_len > u16::MAX as usize {
-            return Err(DnsError::new("payload too long"));
-        }
-        write_u16(&mut out, rdata_len as u16);
-        if let Some(payload) = params.payload {
-            let mut remaining = payload_len;
-            let mut cursor = 0;
-            while remaining > 0 {
-                let chunk_len = remaining.min(255);
-                out.push(chunk_len as u8);
-                out.extend_from_slice(&payload[cursor..cursor + chunk_len]);
-                cursor += chunk_len;
-                remaining -= chunk_len;
-            }
+    if ancount > 0 {
+        let payload = params.payload.unwrap_or(&[]);
+        let len = payload.len();
+        let total = 2 + len;
+        let padded_len = total.div_ceil(4) * 4;
+        let mut buf = vec![0u8; padded_len];
+        buf[0] = (len >> 8) as u8;
+        buf[1] = (len & 0xFF) as u8;
+        buf[2..2 + len].copy_from_slice(payload);
+
+        for chunk in buf.chunks(4) {
+            out.extend_from_slice(&[0xC0, 0x0C]);
+            write_u16(&mut out, RR_A);
+            write_u16(&mut out, params.question.qclass);
+            write_u32(&mut out, 60);
+            write_u16(&mut out, 4);
+            out.extend_from_slice(chunk);
         }
     }
 
@@ -216,7 +217,7 @@ pub fn decode_response(packet: &[u8]) -> Option<Vec<u8>> {
     if rcode != Rcode::Ok {
         return None;
     }
-    if header.ancount != 1 {
+    if header.ancount == 0 {
         return None;
     }
 
@@ -230,44 +231,39 @@ pub fn decode_response(packet: &[u8]) -> Option<Vec<u8>> {
         offset += 4;
     }
 
-    let (_, new_offset) = parse_name(packet, offset).ok()?;
-    offset = new_offset;
-    if offset + 10 > packet.len() {
-        return None;
-    }
-    let qtype = read_u16(packet, offset)?;
-    offset += 2;
-    let _qclass = read_u16(packet, offset)?;
-    offset += 2;
-    let _ttl = read_u32(packet, offset)?;
-    offset += 4;
-    let rdlen = read_u16(packet, offset)? as usize;
-    offset += 2;
-    if offset + rdlen > packet.len() || rdlen < 1 {
-        return None;
-    }
-    if qtype != RR_TXT {
-        return None;
-    }
-
-    let mut remaining = rdlen;
-    let mut cursor = offset;
-    let mut out = Vec::with_capacity(rdlen);
-    while remaining > 0 {
-        let txt_len = packet[cursor] as usize;
-        cursor += 1;
-        remaining -= 1;
-        if txt_len > remaining {
+    let mut out = Vec::with_capacity(header.ancount as usize * 4);
+    for _ in 0..header.ancount {
+        let (_, new_offset) = parse_name(packet, offset).ok()?;
+        offset = new_offset;
+        if offset + 10 > packet.len() {
             return None;
         }
-        out.extend_from_slice(&packet[cursor..cursor + txt_len]);
-        cursor += txt_len;
-        remaining -= txt_len;
+        let rrtype = read_u16(packet, offset)?;
+        offset += 2;
+        let _rrclass = read_u16(packet, offset)?;
+        offset += 2;
+        let _ttl = read_u32(packet, offset)?;
+        offset += 4;
+        let rdlen = read_u16(packet, offset)? as usize;
+        offset += 2;
+        if rrtype != RR_A || rdlen != 4 {
+            return None;
+        }
+        if offset + rdlen > packet.len() {
+            return None;
+        }
+        out.extend_from_slice(&packet[offset..offset + rdlen]);
+        offset += rdlen;
     }
-    if out.is_empty() {
+
+    if out.len() < 2 {
         return None;
     }
-    Some(out)
+    let len = ((out[0] as usize) << 8) | (out[1] as usize);
+    if len > out.len() - 2 {
+        return None;
+    }
+    Some(out[2..2 + len].to_vec())
 }
 
 pub fn is_response(packet: &[u8]) -> bool {
@@ -288,13 +284,13 @@ fn encode_opt_record(out: &mut Vec<u8>) -> Result<(), DnsError> {
 #[cfg(test)]
 mod tests {
     use super::encode_response;
-    use crate::types::{Question, ResponseParams, CLASS_IN, RR_TXT};
+    use crate::types::{Question, ResponseParams, CLASS_IN, RR_A};
 
     #[test]
     fn encode_response_rejects_large_payload() {
         let question = Question {
             name: "a.test.com.".to_string(),
-            qtype: RR_TXT,
+            qtype: RR_A,
             qclass: CLASS_IN,
         };
         let payload = vec![0u8; u16::MAX as usize];

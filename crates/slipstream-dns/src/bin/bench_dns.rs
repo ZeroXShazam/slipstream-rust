@@ -1,7 +1,7 @@
 use slipstream_core::cli::init_logging;
 use slipstream_dns::{
     build_qname, decode_query, decode_response, encode_query, encode_response,
-    max_payload_len_for_domain, QueryParams, Question, ResponseParams, CLASS_IN, RR_TXT,
+    max_payload_len_for_domain, QueryParams, Question, ResponseParams, CLASS_IN, RR_A,
 };
 use std::env;
 use std::time::Instant;
@@ -56,7 +56,7 @@ fn main() {
     let query_params = QueryParams {
         id: 0x1234,
         qname: &qname,
-        qtype: RR_TXT,
+        qtype: RR_A,
         qclass: CLASS_IN,
         rd: true,
         cd: false,
@@ -67,7 +67,7 @@ fn main() {
 
     let question = Question {
         name: qname.clone(),
-        qtype: RR_TXT,
+        qtype: RR_A,
         qclass: CLASS_IN,
     };
     let response_params = ResponseParams {

@@ -8,18 +8,18 @@ This document captures the DNS codec behavior and how it is validated.
 - Inline dots: insert '.' every 57 characters from the right, never add a trailing dot.
 - QNAME format: <base32(payload) with inline dots>.<domain>.
 - Servers may be configured with multiple domains; the QNAME suffix must match one.
-- DNS query: QTYPE=TXT, QCLASS=IN, RD=1, EDNS0 OPT always included.
+- DNS query: QTYPE=A, QCLASS=IN, RD=1, EDNS0 OPT always included.
 - Server decode rules:
   - QR=1 or QDCOUNT!=1 -> FORMAT_ERROR.
-  - QTYPE!=TXT -> NAME_ERROR.
+  - QTYPE!=A -> NAME_ERROR.
   - Empty subdomain or suffix mismatch -> NAME_ERROR.
   - If multiple suffixes match, use the longest matching domain.
   - Base32 decode failure -> SERVER_FAILURE.
   - Parse errors -> drop the message (no response).
-- Client decode rules: accept only QR=1, RCODE=OK, ANCOUNT=1, TXT answer;
-  reassemble multi-part TXT payloads in order.
-- QUIC stateless reset packets, when generated, are carried as normal TXT payloads
-  with RCODE=OK.
+- Client decode rules: accept only QR=1, RCODE=OK, ANCOUNT>=1, A answers;
+  concatenate A record rdata, then extract payload using 2-byte length prefix.
+- QUIC stateless reset packets, when generated, are carried as normal A-encoded
+  payloads with RCODE=OK.
 
 For the full protocol overview, see docs/protocol.md.
 
@@ -28,13 +28,11 @@ For the full protocol overview, see docs/protocol.md.
 Golden vectors live in fixtures/vectors/dns-vectors.json (schema v2).
 Generator input is tools/vector_gen/vectors.txt.
 
-Regenerate vectors (requires the C repo):
+Regenerate vectors (Rust-based, no C repo required):
 
 ```
 ./scripts/gen_vectors.sh
 ```
-
-Set SLIPSTREAM_DIR if the C repo is not at ../slipstream.
 
 ## Tests
 
