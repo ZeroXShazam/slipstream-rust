@@ -3,8 +3,8 @@ use crate::dots;
 
 use crate::name::{encode_name, extract_subdomain_multi, parse_name};
 use crate::types::{
-    DecodeQueryError, DecodedQuery, DnsError, QueryParams, Rcode, ResponseParams, EDNS_UDP_PAYLOAD,
-    RR_A, RR_OPT,
+    DecodeQueryError, DecodedQuery, DnsError, QueryParams, Rcode, RecordType, ResponseParams,
+    EDNS_UDP_PAYLOAD, RR_A, RR_AAAA, RR_OPT, RR_TXT,
 };
 use crate::wire::{
     parse_header, parse_question, parse_question_for_reply, read_u16, read_u32, write_u16,
@@ -54,7 +54,7 @@ pub fn decode_query_with_domains(
         Err(_) => return Err(DecodeQueryError::Drop),
     };
 
-    if question.qtype != RR_A {
+    if RecordType::from_qtype(question.qtype).is_none() {
         return Err(DecodeQueryError::Reply {
             id: header.id,
             rd,
@@ -150,12 +150,29 @@ pub fn encode_response(params: &ResponseParams<'_>) -> Result<Vec<u8>, DnsError>
         Rcode::NameError
     });
 
+    let record_type = RecordType::from_qtype(params.question.qtype).unwrap_or(RecordType::A);
     let mut ancount = 0u16;
     if payload_len > 0 && rcode == Rcode::Ok {
-        // A records: 4 bytes each. Prepend 2-byte length, pad to multiple of 4.
-        let total = 2 + payload_len;
-        ancount = (total.div_ceil(4)) as u16;
-        if ancount > u16::MAX / 16 {
+        ancount = match record_type {
+            RecordType::A => {
+                let total = 2 + payload_len;
+                (total.div_ceil(4)) as u16
+            }
+            RecordType::Aaaa => {
+                let total = 2 + payload_len;
+                (total.div_ceil(16)) as u16
+            }
+            RecordType::Txt => {
+                let total = 2 + payload_len;
+                (total.div_ceil(255)) as u16
+            }
+        };
+        let max_ancount = match record_type {
+            RecordType::A => u16::MAX / 16,
+            RecordType::Aaaa => u16::MAX / 24,
+            RecordType::Txt => u16::MAX / 260,
+        };
+        if ancount > max_ancount {
             return Err(DnsError::new("payload too long"));
         }
     } else if params.rcode.is_some() {
@@ -187,19 +204,57 @@ pub fn encode_response(params: &ResponseParams<'_>) -> Result<Vec<u8>, DnsError>
         let payload = params.payload.unwrap_or(&[]);
         let len = payload.len();
         let total = 2 + len;
-        let padded_len = total.div_ceil(4) * 4;
-        let mut buf = vec![0u8; padded_len];
-        buf[0] = (len >> 8) as u8;
-        buf[1] = (len & 0xFF) as u8;
-        buf[2..2 + len].copy_from_slice(payload);
 
-        for chunk in buf.chunks(4) {
-            out.extend_from_slice(&[0xC0, 0x0C]);
-            write_u16(&mut out, RR_A);
-            write_u16(&mut out, params.question.qclass);
-            write_u32(&mut out, 60);
-            write_u16(&mut out, 4);
-            out.extend_from_slice(chunk);
+        match record_type {
+            RecordType::A => {
+                let padded_len = total.div_ceil(4) * 4;
+                let mut buf = vec![0u8; padded_len];
+                buf[0] = (len >> 8) as u8;
+                buf[1] = (len & 0xFF) as u8;
+                buf[2..2 + len].copy_from_slice(payload);
+
+                for chunk in buf.chunks(4) {
+                    out.extend_from_slice(&[0xC0, 0x0C]);
+                    write_u16(&mut out, RR_A);
+                    write_u16(&mut out, params.question.qclass);
+                    write_u32(&mut out, 60);
+                    write_u16(&mut out, 4);
+                    out.extend_from_slice(chunk);
+                }
+            }
+            RecordType::Aaaa => {
+                let padded_len = total.div_ceil(16) * 16;
+                let mut buf = vec![0u8; padded_len];
+                buf[0] = (len >> 8) as u8;
+                buf[1] = (len & 0xFF) as u8;
+                buf[2..2 + len].copy_from_slice(payload);
+
+                for chunk in buf.chunks(16) {
+                    out.extend_from_slice(&[0xC0, 0x0C]);
+                    write_u16(&mut out, RR_AAAA);
+                    write_u16(&mut out, params.question.qclass);
+                    write_u32(&mut out, 60);
+                    write_u16(&mut out, 16);
+                    out.extend_from_slice(chunk);
+                }
+            }
+            RecordType::Txt => {
+                let padded_len = total.div_ceil(255) * 255;
+                let mut buf = vec![0u8; padded_len];
+                buf[0] = (len >> 8) as u8;
+                buf[1] = (len & 0xFF) as u8;
+                buf[2..2 + len].copy_from_slice(payload);
+
+                for chunk in buf.chunks(255) {
+                    out.extend_from_slice(&[0xC0, 0x0C]);
+                    write_u16(&mut out, RR_TXT);
+                    write_u16(&mut out, params.question.qclass);
+                    write_u32(&mut out, 60);
+                    write_u16(&mut out, (chunk.len() + 1) as u16);
+                    out.push(chunk.len() as u8);
+                    out.extend_from_slice(chunk);
+                }
+            }
         }
     }
 
@@ -231,7 +286,7 @@ pub fn decode_response(packet: &[u8]) -> Option<Vec<u8>> {
         offset += 4;
     }
 
-    let mut out = Vec::with_capacity(header.ancount as usize * 4);
+    let mut out = Vec::new();
     for _ in 0..header.ancount {
         let (_, new_offset) = parse_name(packet, offset).ok()?;
         offset = new_offset;
@@ -246,13 +301,30 @@ pub fn decode_response(packet: &[u8]) -> Option<Vec<u8>> {
         offset += 4;
         let rdlen = read_u16(packet, offset)? as usize;
         offset += 2;
-        if rrtype != RR_A || rdlen != 4 {
-            return None;
-        }
         if offset + rdlen > packet.len() {
             return None;
         }
-        out.extend_from_slice(&packet[offset..offset + rdlen]);
+        match rrtype {
+            RR_A if rdlen == 4 => {
+                out.extend_from_slice(&packet[offset..offset + rdlen]);
+            }
+            RR_AAAA if rdlen == 16 => {
+                out.extend_from_slice(&packet[offset..offset + rdlen]);
+            }
+            RR_TXT if rdlen >= 1 => {
+                let mut r = offset;
+                while r < offset + rdlen {
+                    let str_len = packet[r] as usize;
+                    r += 1;
+                    if r + str_len > offset + rdlen {
+                        return None;
+                    }
+                    out.extend_from_slice(&packet[r..r + str_len]);
+                    r += str_len;
+                }
+            }
+            _ => return None,
+        }
         offset += rdlen;
     }
 
@@ -283,8 +355,8 @@ fn encode_opt_record(out: &mut Vec<u8>) -> Result<(), DnsError> {
 
 #[cfg(test)]
 mod tests {
-    use super::encode_response;
-    use crate::types::{Question, ResponseParams, CLASS_IN, RR_A};
+    use super::{decode_response, encode_response};
+    use crate::types::{Question, ResponseParams, CLASS_IN, RR_A, RR_AAAA, RR_TXT};
 
     #[test]
     fn encode_response_rejects_large_payload() {
@@ -303,5 +375,47 @@ mod tests {
             rcode: None,
         };
         assert!(encode_response(&params).is_err());
+    }
+
+    #[test]
+    fn aaaa_round_trip() {
+        let question = Question {
+            name: "a.test.com.".to_string(),
+            qtype: RR_AAAA,
+            qclass: CLASS_IN,
+        };
+        let payload = b"hello aaaa";
+        let params = ResponseParams {
+            id: 0x1234,
+            rd: false,
+            cd: false,
+            question: &question,
+            payload: Some(payload.as_slice()),
+            rcode: None,
+        };
+        let encoded = encode_response(&params).unwrap();
+        let decoded = decode_response(&encoded).unwrap();
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn txt_round_trip() {
+        let question = Question {
+            name: "a.test.com.".to_string(),
+            qtype: RR_TXT,
+            qclass: CLASS_IN,
+        };
+        let payload = b"hello txt";
+        let params = ResponseParams {
+            id: 0x1234,
+            rd: false,
+            cd: false,
+            question: &question,
+            payload: Some(payload.as_slice()),
+            rcode: None,
+        };
+        let encoded = encode_response(&params).unwrap();
+        let decoded = decode_response(&encoded).unwrap();
+        assert_eq!(decoded, payload);
     }
 }

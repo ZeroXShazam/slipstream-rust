@@ -1,8 +1,36 @@
 use std::fmt;
 
 pub const RR_A: u16 = 1;
+pub const RR_AAAA: u16 = 28;
 pub const RR_TXT: u16 = 16;
 pub const RR_OPT: u16 = 41;
+
+/// Supported DNS record types for tunnel encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordType {
+    A,
+    Aaaa,
+    Txt,
+}
+
+impl RecordType {
+    pub fn to_qtype(self) -> u16 {
+        match self {
+            RecordType::A => RR_A,
+            RecordType::Aaaa => RR_AAAA,
+            RecordType::Txt => RR_TXT,
+        }
+    }
+
+    pub fn from_qtype(qtype: u16) -> Option<Self> {
+        match qtype {
+            RR_A => Some(RecordType::A),
+            RR_AAAA => Some(RecordType::Aaaa),
+            RR_TXT => Some(RecordType::Txt),
+            _ => None,
+        }
+    }
+}
 pub const CLASS_IN: u16 = 1;
 pub const EDNS_UDP_PAYLOAD: u16 = 1232;
 

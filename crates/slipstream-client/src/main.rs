@@ -10,6 +10,7 @@ use slipstream_core::{
     cli::{exit_with_error, exit_with_message, init_logging, unwrap_or_exit},
     normalize_domain, parse_host_port, parse_host_port_parts, sip003, AddressKind, HostPort,
 };
+use slipstream_dns::RecordType;
 use slipstream_ffi::{ClientConfig, ResolverMode, ResolverSpec};
 use tokio::runtime::Builder;
 
@@ -58,6 +59,12 @@ struct Args {
     debug_poll: bool,
     #[arg(long = "debug-streams")]
     debug_streams: bool,
+    #[arg(
+        long = "record-type",
+        value_parser = ["a", "aaaa", "txt"],
+        default_value = "a"
+    )]
+    record_type: String,
 }
 
 fn main() {
@@ -171,6 +178,17 @@ fn main() {
         keep_alive_override.unwrap_or(args.keep_alive_interval)
     };
 
+    let record_type = if cli_provided(&matches, "record_type") {
+        parse_record_type(&args.record_type).expect("record_type validated by clap")
+    } else {
+        unwrap_or_exit(
+            parse_record_type_option(&sip003_env.plugin_options),
+            "SIP003 env error",
+            2,
+        )
+        .unwrap_or(RecordType::A)
+    };
+
     let config = ClientConfig {
         tcp_listen_host: &tcp_listen_host,
         tcp_listen_port,
@@ -182,6 +200,7 @@ fn main() {
         keep_alive_interval: keep_alive_interval as usize,
         debug_poll: args.debug_poll,
         debug_streams: args.debug_streams,
+        record_type,
     };
 
     let runtime = Builder::new_current_thread()
@@ -325,6 +344,27 @@ fn parse_congestion_control(options: &[sip003::Sip003Option]) -> Result<Option<S
                 return Err(format!("Invalid congestion-control value: {}", value));
             }
             last = Some(value.to_string());
+        }
+    }
+    Ok(last)
+}
+
+fn parse_record_type(s: &str) -> Result<RecordType, String> {
+    match s.to_lowercase().as_str() {
+        "a" => Ok(RecordType::A),
+        "aaaa" => Ok(RecordType::Aaaa),
+        "txt" => Ok(RecordType::Txt),
+        _ => Err(format!("Invalid record-type: {}", s)),
+    }
+}
+
+fn parse_record_type_option(
+    options: &[sip003::Sip003Option],
+) -> Result<Option<RecordType>, String> {
+    let mut last = None;
+    for option in options {
+        if option.key == "record-type" {
+            last = Some(parse_record_type(option.value.trim())?);
         }
     }
     Ok(last)

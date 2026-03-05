@@ -456,6 +456,7 @@ dependencies = [
  "libc",
  "openssl-sys",
  "slipstream-core",
+ "slipstream-dns",
 ]
 
 [[package]]

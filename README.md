@@ -11,6 +11,16 @@ This repository hosts the Rust rewrite of the [original C implementation](https:
 - Fully async with tokio.
 - And more! For a more up-to-date list of extra features, see the [merged PRs](https://github.com/Mygod/slipstream-rust/pulls?q=is%3Apr+is%3Amerged+label%3Aenhancement).
 
+## One-line server installer
+
+Deploy a slipstream-rust server on Linux (Fedora, Rocky, CentOS, Debian, Ubuntu):
+
+```bash
+bash <(curl -Ls https://raw.githubusercontent.com/ZeroXShazam/slipstream-rust-deploy/master/slipstream-rust-deploy.sh)
+```
+
+See [slipstream-rust-deploy](https://github.com/ZeroXShazam/slipstream-rust-deploy) for full documentation.
+
 ## Quick start (local dev)
 
 Prereqs:
